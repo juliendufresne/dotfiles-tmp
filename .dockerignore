@@ -1,0 +1,9 @@
+# Trims the build context for images built from the repository root (the
+# install-test image - see dev/docker/install-test/Dockerfile). The dev-tools
+# image builds from its own sub-folder context and is unaffected.
+#
+# That Dockerfile only COPYs provision.sh and the tool manifests; everything
+# else is bind-mounted at run time, so the heavy, build-irrelevant trees are
+# dropped here to keep the context transfer fast.
+.git
+var

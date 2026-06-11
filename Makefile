@@ -17,6 +17,21 @@ KCOV_VERSION ?= 43
 DEV_TOOL_CONTEXT := dev/docker/dev-tools
 DEV_TOOL_DOCKERFILE := $(DEV_TOOL_CONTEXT)/Dockerfile
 
+# Distro matrix for the install-test image (see the Install test section). The
+# base image for each distro is INSTALL_TEST_BASE_<distro>; override any of
+# these through .env / .env.local.
+INSTALL_TEST_DISTROS := ubuntu debian fedora alpine arch
+INSTALL_TEST_BASE_ubuntu ?= ubuntu:26.04
+INSTALL_TEST_BASE_debian ?= debian:13
+INSTALL_TEST_BASE_fedora ?= fedora:44
+INSTALL_TEST_BASE_alpine ?= alpine:3.23
+INSTALL_TEST_BASE_arch   ?= archlinux:latest
+
+# The install-test Dockerfile builds from the repository root (so it can COPY
+# the canonical dev/test/install/tools.d manifests); a .dockerignore keeps that
+# context small.
+INSTALL_TEST_DOCKERFILE := dev/docker/install-test/Dockerfile
+
 # Pretty progress line.
 log = printf '\033[1;34m▶ %s\033[0m\n' "$(1)"
 
@@ -125,6 +140,38 @@ test-shell-focus: tools-ensure ## Run only the shellspec blocks marked with fDes
 	@$(call log,shellspec --focus via $(DEV_TOOL_IMAGE))
 	$(_DOCKER_DEV_TOOLS_RUN) \
 		shellspec --focus dev/test/shell
+
+##@ ── Install test ───────────────────────────────────────────────────────────
+
+# End-to-end install/uninstall test on a fresh OS. Each distro gets its own
+# image (BASE_IMAGE build-arg → provision.sh installs bash + the configured
+# tools), then the live repo is bind-mounted read-only and the runner drives
+# the real bin/dotfiles lifecycle. Unlike the dev-tools targets there is no
+# --user flag: the container writes only to its own tester HOME, and the :ro
+# mount makes any stray write into the repo fail loudly - which is desirable.
+
+.PHONY: install-test-build-%
+install-test-build-%: ## Build the install-test image for one distro (e.g. install-test-build-alpine)
+	@$(call log,building dotfiles-install-test:$* from $(INSTALL_TEST_BASE_$*))
+	docker build \
+		--file $(INSTALL_TEST_DOCKERFILE) \
+		--build-arg BASE_IMAGE=$(INSTALL_TEST_BASE_$*) \
+		--tag dotfiles-install-test:$* \
+		.
+
+.PHONY: install-test-%
+install-test-%: install-test-build-% ## Run the install-test lifecycle for one distro (e.g. install-test-alpine)
+	@$(call log,install-test on $*)
+	docker run --rm \
+		--volume "$(CURDIR):/work:ro" \
+		--workdir /work \
+		dotfiles-install-test:$*
+
+.PHONY: install-test
+install-test: ## Run the install-test lifecycle across the whole Linux distro matrix
+	@for d in $(INSTALL_TEST_DISTROS); do \
+		$(MAKE) --no-print-directory install-test-$$d || exit $$?; \
+	done
 
 ##@ ── GitHub Actions ──────────────────────────────────────────────────────────
 
