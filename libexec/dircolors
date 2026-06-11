@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   dircolors::available
+#
+# Description:
+#   Reports whether dircolors is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own. dircolors ships with GNU coreutils, so a machine
+#   without it (e.g. a stock busybox box) is simply skipped.
+#
+#   On macOS, Homebrew installs the GNU tools under g-prefixed names, so the
+#   binary is `gdircolors` (in the Homebrew bin dir, on PATH via brew shellenv)
+#   rather than `dircolors` - the unprefixed name only appears once coreutils'
+#   gnubin dir is added to PATH, which happens in fish, not in this installer.
+#   So accept either name: the installer only needs dircolors as a presence
+#   gate (its actual work is symlinking the database), and the fish loader at
+#   conf.d/10-dircolors.fish handles the g-prefix the same way.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a dircolors (or gdircolors) executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   dircolors::available || return 0
+#--------------------------------------------------
+dircolors::available() {
+    command -v dircolors > /dev/null 2>&1 || command -v gdircolors > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f dircolors::available
+
+#--------------------------------------------------
+# Function:
+#   dircolors::install
+#
+# Description:
+#   Installs the shared dircolors database by symlinking the whole
+#   share/dotfiles/dircolors directory to ~/.config/dircolors (the XDG config
+#   home). Unlike the tools it links beside, dircolors reads no config of its
+#   own accord: the database only takes effect once an interactive shell
+#   evaluates it into LS_COLORS - the fish loader in
+#   share/dotfiles/fish/conf.d/dircolors.fish does exactly that, reading the
+#   file from this XDG location. Linking the whole directory (rather than the
+#   single file) mirrors the git installer and lets a future second file live
+#   beside the database without touching this code. Delegates the link (with
+#   its backup-and-converge behavior) to link::create. Reads DOTFILES_ROOT and
+#   writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::create on failure
+#
+# Example:
+#   dircolors::install
+#--------------------------------------------------
+dircolors::install() {
+    local source_dir
+    local xdg_base
+    local xdg_dircolors
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/dircolors"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_dircolors="${xdg_base}/dircolors"
+
+    output::stage 'Dircolors'
+
+    link::create "${source_dir}" "${xdg_dircolors}"
+}
+[[ -v TEST_FLAG ]] || readonly -f dircolors::install
+
+#--------------------------------------------------
+# Function:
+#   dircolors::uninstall
+#
+# Description:
+#   Reverses dircolors::install. Delegates removal of the ~/.config/dircolors
+#   symlink to link::remove (which leaves anything that is not our link
+#   alone). Reads DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   dircolors::uninstall
+#--------------------------------------------------
+dircolors::uninstall() {
+    local source_dir
+    local xdg_base
+    local xdg_dircolors
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/dircolors"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_dircolors="${xdg_base}/dircolors"
+
+    output::stage 'Dircolors'
+
+    link::remove "${source_dir}" "${xdg_dircolors}"
+}
+[[ -v TEST_FLAG ]] || readonly -f dircolors::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   dircolors::main [<command>]
+#
+# Description:
+#   Entry point for the dircolors installer. Skips silently when dircolors is
+#   not installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be run
+#   directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when dircolors is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   dircolors::main install
+#--------------------------------------------------
+dircolors::main() {
+    local command
+
+    command="${1:-install}"
+
+    dircolors::available || return 0
+
+    case "${command}" in
+        install)
+            dircolors::install
+            ;;
+        uninstall)
+            dircolors::uninstall
+            ;;
+        *)
+            output::fatal "dircolors: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f dircolors::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/dircolors → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || dircolors::main "$@"
