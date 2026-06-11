@@ -1,0 +1,24 @@
+--shell bash
+--require spec_helper
+--helperdir dev/test/shell
+--covdir var/coverage/shell
+--reportdir var/report/shell
+
+#---------------------------------------
+# KCOV OPTIONS (coverage)
+#---------------------------------------
+
+# Uncomment to see all options
+#--kcov-options "--help --uncommon-options"
+
+# Limit instrumentation to the shell sources that have specs: bin/, the
+# installers under libexec/ and the shared libraries under lib/. Add a new
+# directory here only once it has specs, otherwise its untested scripts would
+# drag the reported coverage down.
+--kcov-options '--include-path=./bin/,./libexec/,./lib/'
+# Careful: matches every file, even non-shell ones. Necessary to include the
+# extensionless scripts under bin/.
+--kcov-options '--include-pattern=/'
+--kcov-options '--path-strip-level=1'
+# Don't accumulate data from multiple runs.
+--kcov-options '--clean'

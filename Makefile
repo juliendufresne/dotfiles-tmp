@@ -105,6 +105,27 @@ lint-github-workflows: tools-ensure ## Lint workflow action format and shellchec
 	$(_DOCKER_DEV_TOOLS_RUN) \
 		python3 dev/bin/github_workflow_scan.py
 
+##@ ── Test ────────────────────────────────────────────────────────────────────
+
+.PHONY: test
+test: test-shell ## Run every test suite
+
+# Useful shellspec options to append on the command line:
+#   -p / --profile        report the slowest examples
+#   -j N / --jobs N        run N examples in parallel
+#   --example 'pattern'    run only matching Describe/It blocks
+.PHONY: test-shell
+test-shell: tools-ensure ## Run the shellspec suite over bin/ (read-only)
+	@$(call log,shellspec via $(DEV_TOOL_IMAGE))
+	$(_DOCKER_DEV_TOOLS_RUN) \
+		shellspec dev/test/shell
+
+.PHONY: test-shell-focus
+test-shell-focus: tools-ensure ## Run only the shellspec blocks marked with fDescribe/fIt
+	@$(call log,shellspec --focus via $(DEV_TOOL_IMAGE))
+	$(_DOCKER_DEV_TOOLS_RUN) \
+		shellspec --focus dev/test/shell
+
 ##@ ── GitHub Actions ──────────────────────────────────────────────────────────
 
 .PHONY: fix-github-workflows
