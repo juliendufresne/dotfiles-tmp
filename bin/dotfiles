@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   dotfiles::run <command> [<tool>...]
+#
+# Description:
+#   Runs tool installers found under libexec, handing each the given
+#   lifecycle command. With no tool names, every executable installer runs
+#   in lexical order; with tool names, only those run - an unknown name is
+#   rejected before anything executes. Each installer is a standalone
+#   executable that dispatches on the command itself (install/uninstall),
+#   so both lifecycles share this one discovery loop. Announces a dry run
+#   up front (reading DOTFILES_DRY_RUN, which the installers also honor).
+#   Reads DOTFILES_ROOT to locate the installers, and executes each one
+#   (which may modify the home directory). Each installer prints its own
+#   stage header and per-action detail; this loop adds no output of its
+#   own beyond a "nothing to do" notice when no installer is dispatched
+#   and the dry-run banner.
+#
+# Arguments:
+#   <command>  Lifecycle command forwarded to every installer
+#              (install or uninstall)
+#   <tool>...  Optional installer names to restrict the run to
+#
+# Returns:
+#   0 when every dispatched installer succeeds
+#   2 when a named tool has no installer
+#   N propagated from the first installer that fails
+#
+# Example:
+#   dotfiles::run install git
+#--------------------------------------------------
+dotfiles::run() {
+    local command
+    local installer
+    local installer_dir
+    local -a installers
+    local tool
+
+    command="$1"
+    shift
+    installer_dir="${DOTFILES_ROOT}/libexec"
+    installers=()
+
+    if (( $# > 0 ))
+    then
+        for tool in "$@"
+        do
+            if [[ ! -x "${installer_dir}/${tool}" ]]
+            then
+                output::fatal "dotfiles: unknown tool: ${tool}"
+
+                return 2
+            fi
+
+            installers+=( "${installer_dir}/${tool}" )
+        done
+    else
+        for installer in "${installer_dir}"/*
+        do
+            [[ -x "${installer}" ]] || continue
+
+            installers+=( "${installer}" )
+        done
+    fi
+
+    if (( ${#installers[@]} == 0 ))
+    then
+        output::notice 'nothing to do'
+
+        return 0
+    fi
+
+    for installer in "${installers[@]+"${installers[@]}"}"
+    do
+        "${installer}" "${command}" || return $?
+    done
+}
+[[ -v TEST_FLAG ]] || readonly -f dotfiles::run
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   dotfiles::main [OPTIONS] [<command>] [<tool>...]
+#
+# Description:
+#   Entry point. Parses options and positional arguments, then dispatches
+#   the requested lifecycle command (defaulting to install) to the
+#   selected installers. --help prints usage and exits; --dry-run exports
+#   DOTFILES_DRY_RUN so both this process and the installer subprocesses
+#   run without writing. Unknown options are rejected with usage on
+#   stderr.
+#
+# Arguments:
+#   -n, --dry-run  Describe changes without making them
+#   -h, --help     Print usage and return 0
+#   <command>      install (default) or uninstall
+#   <tool>...      Optional installer names to restrict the run to
+#
+# Returns:
+#   0 on success, or after printing help
+#   2 on an unknown option
+#   N propagated from the dispatched command
+#
+# Example:
+#   dotfiles::main install git
+#--------------------------------------------------
+dotfiles::main() {
+    local arg
+    local command
+    local -a tools
+
+    command='install'
+    tools=()
+
+    while (( $# > 0 ))
+    do
+        arg="$1"
+
+        case "${arg}" in
+            install | uninstall)
+                command="${arg}"
+                ;;
+            *)
+                tools+=( "${arg}" )
+                ;;
+        esac
+
+        shift
+    done
+
+    # Anything after `--` is taken literally as a tool name.
+    while (( $# > 0 ))
+    do
+        tools+=( "$1" )
+
+        shift
+    done
+
+    dotfiles::run "${command}" "${tools[@]+"${tools[@]}"}"
+}
+[[ -v TEST_FLAG ]] || readonly -f dotfiles::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || dotfiles::main "$@"
