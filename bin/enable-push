@@ -470,6 +470,140 @@ enable_push::configure_remote() {
     output::success "set origin remote to ${new_url}"
 }
 [[ -v TEST_FLAG ]] || readonly -f enable_push::configure_remote
+
+#--------------------------------------------------
+# Function:
+#   enable_push::gpg_signing_keys
+#
+# Description:
+#   Reads `gpg --list-secret-keys --with-colons` output on stdin and prints
+#   a "<fingerprint>\t<user-id>" line to stdout for each secret key,
+#   pairing each `sec` record's first `fpr` (the primary key fingerprint,
+#   ignoring subkeys) with its first `uid` (the primary user id, which
+#   carries the name, comment and email used to tell keys apart). A key with
+#   no user id still emits, with an empty user-id field.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 always
+#
+# Example:
+#   gpg --list-secret-keys --with-colons | enable_push::gpg_signing_keys
+#--------------------------------------------------
+enable_push::gpg_signing_keys() {
+    local fingerprint
+    local line
+    local uid
+    local -a fields
+
+    fingerprint=''
+    uid=''
+
+    while IFS= read -r line || [[ -n "${line}" ]]
+    do
+        IFS=':' read -r -a fields <<< "${line}"
+
+        case "${fields[0]:-}" in
+            sec)
+                [[ -z "${fingerprint}" ]] || printf '%s\t%s\n' "${fingerprint}" "${uid}"
+                fingerprint=''
+                uid=''
+                ;;
+            fpr)
+                [[ -n "${fingerprint}" ]] || fingerprint="${fields[9]:-}"
+                ;;
+            uid)
+                [[ -n "${uid}" ]] || uid="${fields[9]:-}"
+                ;;
+            *)
+                ;;
+        esac
+    done
+
+    [[ -z "${fingerprint}" ]] || printf '%s\t%s\n' "${fingerprint}" "${uid}"
+}
+[[ -v TEST_FLAG ]] || readonly -f enable_push::gpg_signing_keys
+
+#--------------------------------------------------
+# Function:
+#   enable_push::configure_signing_key <repo-root>
+#
+# Description:
+#   Points the repository at an existing GPG key for signing. Lists the
+#   machine's secret keys by their user id, lets the user pick one (or skip),
+#   and on a choice sets user.signingKey to that key's fingerprint and turns
+#   on commit.gpgsign and tag.gpgsign in the repository's local config.
+#   Skips silently with a notice when gpg is absent or holds no secret key.
+#   Reads the gpg keyring; writes the local git config through git and
+#   reports through the output library; prompts on stderr.
+#
+# Arguments:
+#   <repo-root>  Path to the git working tree to configure
+#
+# Returns:
+#   0 on success, when skipped, or when no key is available
+#   N propagated from git config on failure
+#
+# Example:
+#   enable_push::configure_signing_key "${root}"
+#--------------------------------------------------
+enable_push::configure_signing_key() {
+    local choice
+    local fingerprint
+    local keys
+    local raw_keys
+    local repo_root
+    local uid
+    local -a fingerprints
+    local -a labels
+
+    repo_root="$1"
+
+    if ! command -v gpg > /dev/null 2>&1
+    then
+        output::info 'gpg is not installed - skipping signing configuration'
+
+        return 0
+    fi
+
+    # List then parse in two assignments rather than one piped process
+    # substitution, so neither command's exit status is masked (SC2312).
+    raw_keys="$( gpg --list-secret-keys --with-colons 2>/dev/null )" || raw_keys=''
+    keys="$( enable_push::gpg_signing_keys <<< "${raw_keys}" )"
+
+    fingerprints=()
+    labels=()
+    while IFS=$'\t' read -r fingerprint uid
+    do
+        [[ -n "${fingerprint}" ]] || continue
+
+        fingerprints+=( "${fingerprint}" )
+        labels+=( "${uid:-no user id} (${fingerprint})" )
+    done <<< "${keys}"
+
+    if (( ${#fingerprints[@]} == 0 ))
+    then
+        output::info 'no GPG secret key found - skipping signing configuration'
+
+        return 0
+    fi
+
+    choice="$( enable_push::menu 'Select a GPG key to sign commits and tags:' "${labels[@]}" )" || {
+        output::info 'GPG signing unchanged'
+
+        return 0
+    }
+
+    fingerprint="${fingerprints[$(( choice - 1 ))]}"
+
+    git -C "${repo_root}" config --local user.signingKey "${fingerprint}"
+    git -C "${repo_root}" config --local commit.gpgsign true
+    git -C "${repo_root}" config --local tag.gpgsign true
+    output::success "configured commit and tag signing with ${fingerprint}"
+}
+[[ -v TEST_FLAG ]] || readonly -f enable_push::configure_signing_key
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 #--------------------------------------------------
@@ -518,6 +652,7 @@ enable_push::main() {
     }
 
     enable_push::configure_remote "${repo_root}" "${origin_url}"
+    enable_push::configure_signing_key "${repo_root}"
 }
 [[ -v TEST_FLAG ]] || readonly -f enable_push::main
 

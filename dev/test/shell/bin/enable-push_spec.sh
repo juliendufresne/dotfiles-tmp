@@ -376,6 +376,116 @@ Describe 'bin/enable-push'
     End
 
     # ==========================================================================
+    # enable_push::gpg_signing_keys
+    # ==========================================================================
+    Describe 'enable_push::gpg_signing_keys'
+
+        It 'pairs each fingerprint with its primary user id and ignores subkeys'
+            Data
+                #|sec:::::::::::::
+                #|fpr:::::::::AAAABBBBCCCCDDDD:
+                #|uid:::::::::Jane Doe <jane@example.com>:
+                #|ssb:::::::::::::
+                #|fpr:::::::::1111222233334444:
+            End
+            When call enable_push::gpg_signing_keys
+            The status should be success
+            The stdout should equal "$(printf 'AAAABBBBCCCCDDDD\tJane Doe <jane@example.com>')"
+            The stderr should be blank
+        End
+
+        It 'emits one line per secret key'
+            Data
+                #|sec:::::::::::::
+                #|fpr:::::::::AAAA:
+                #|uid:::::::::Key One:
+                #|sec:::::::::::::
+                #|fpr:::::::::BBBB:
+                #|uid:::::::::Key Two:
+            End
+            When call enable_push::gpg_signing_keys
+            The status should be success
+            The line 1 of stdout should equal "$(printf 'AAAA\tKey One')"
+            The line 2 of stdout should equal "$(printf 'BBBB\tKey Two')"
+            The stderr should be blank
+        End
+
+        It 'emits an empty user id when the key has none'
+            Data
+                #|sec:::::::::::::
+                #|fpr:::::::::CCCC:
+            End
+            When call enable_push::gpg_signing_keys
+            The status should be success
+            The stdout should equal "$(printf 'CCCC\t')"
+            The stderr should be blank
+        End
+
+    End
+
+    # ==========================================================================
+    # enable_push::configure_signing_key
+    # ==========================================================================
+    Describe 'enable_push::configure_signing_key'
+
+        It 'skips signing configuration when gpg is not installed'
+            command() { return 1; }
+            git() { printf 'git %s\n' "$*"; }
+
+            When call enable_push::configure_signing_key /repo
+            The status should be success
+            The stdout should include 'gpg is not installed'
+            The stderr should be blank
+        End
+
+        It 'skips signing configuration when no secret key exists'
+            command() { return 0; }
+            gpg() { :; }
+            git() { printf 'git %s\n' "$*"; }
+
+            When call enable_push::configure_signing_key /repo
+            The status should be success
+            The stdout should include 'no GPG secret key found'
+            The stderr should be blank
+        End
+
+        It 'configures commit and tag signing with the selected key'
+            command() { return 0; }
+            gpg() {
+                printf 'sec:::::::::::::\n'
+                printf 'fpr:::::::::AAAABBBB:\n'
+                printf 'uid:::::::::Jane Doe <jane@example.com>:\n'
+            }
+            enable_push::menu() { printf '1\n'; }
+            git() { printf 'git %s\n' "$*"; }
+
+            When call enable_push::configure_signing_key /repo
+            The status should be success
+            The stdout should include 'git -C /repo config --local user.signingKey AAAABBBB'
+            The stdout should include 'git -C /repo config --local commit.gpgsign true'
+            The stdout should include 'git -C /repo config --local tag.gpgsign true'
+            The stderr should be blank
+        End
+
+        It 'leaves signing unchanged when the selection is skipped'
+            command() { return 0; }
+            gpg() {
+                printf 'sec:::::::::::::\n'
+                printf 'fpr:::::::::AAAABBBB:\n'
+            }
+            enable_push::menu() { return 1; }
+            git() { printf 'git %s\n' "$*"; }
+
+            When call enable_push::configure_signing_key /repo
+            The status should be success
+            The stdout should include 'GPG signing unchanged'
+            The stdout should not include '--local'
+            The stderr should be blank
+        End
+
+    End
+
+    # ==========================================================================
     # constants
     # ==========================================================================
     Describe 'constants'
