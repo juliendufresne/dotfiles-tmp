@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   gpg::available
+#
+# Description:
+#   Reports whether gpg is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a gpg executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   gpg::available || return 0
+#--------------------------------------------------
+gpg::available() {
+    command -v gpg > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f gpg::available
+
+#--------------------------------------------------
+# Function:
+#   gpg::ensure_homedir <dir>
+#
+# Description:
+#   Ensures the GnuPG home directory exists with mode 700 so the symlinked
+#   config lands in a directory gpg accepts: gpg refuses to run (or nags
+#   loudly) when its home is group- or world-readable. Creates the
+#   directory with the restrictive mode when it is absent and leaves an
+#   existing one untouched - a home gpg created already carries 700, and
+#   reusing it must not disturb the keyring, trustdb or agent sockets it
+#   holds. Sets the mode with `mkdir -m` in one step rather than a following
+#   `chmod`: BSD chmod (macOS) rejects the `--` end-of-options separator once
+#   the mode argument has been seen, while `mkdir -m 700 -p` is portable and
+#   applies the mode unmodified by the umask. Reports through the output
+#   library and honors DOTFILES_DRY_RUN.
+#
+# Arguments:
+#   <dir>  Path to the GnuPG home directory (~/.gnupg or $GNUPGHOME)
+#
+# Returns:
+#   0 on success, or when the directory already exists
+#   N propagated from mkdir on failure
+#
+# Example:
+#   gpg::ensure_homedir "${HOME}/.gnupg"
+#--------------------------------------------------
+gpg::ensure_homedir() {
+    local gnupg_home
+
+    gnupg_home="$1"
+
+    if [[ -d "${gnupg_home}" ]]
+    then
+        return 0
+    fi
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would create ${gnupg_home} (mode 700)"
+
+        return 0
+    fi
+
+    # -m applies only to the deepest directory under -p, which is exactly the
+    # one that needs it: gpg checks the homedir's mode, not its parents'.
+    # shellcheck disable=SC2174
+    mkdir -m 700 -p -- "${gnupg_home}"
+    output::info "created ${gnupg_home} (mode 700)"
+}
+[[ -v TEST_FLAG ]] || readonly -f gpg::ensure_homedir
+
+#--------------------------------------------------
+# Function:
+#   gpg::install
+#
+# Description:
+#   Installs the shared gpg configuration by symlinking each config file
+#   under share/dotfiles/gpg into the GnuPG home (${GNUPGHOME:-~/.gnupg}).
+#   Unlike the XDG tools, gpg is linked file by file rather than as a whole
+#   directory: its home also holds the secret keyring, trustdb and agent
+#   sockets, which must never be replaced by a symlink into the repo. Ensures
+#   the home exists at mode 700 first, then delegates each link (with its
+#   backup-and-converge behavior) to link::create. Reads DOTFILES_ROOT and
+#   writes under the GnuPG home.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from gpg::ensure_homedir or link::create on failure
+#
+# Example:
+#   gpg::install
+#--------------------------------------------------
+gpg::install() {
+    local config_file
+    local gnupg_home
+    local source_dir
+    local -a config_files
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/gpg"
+    gnupg_home="${GNUPGHOME:-${HOME}/.gnupg}"
+    config_files=( gpg.conf gpg-agent.conf )
+
+    output::stage 'GPG'
+
+    gpg::ensure_homedir "${gnupg_home}"
+
+    for config_file in "${config_files[@]}"
+    do
+        link::create "${source_dir}/${config_file}" "${gnupg_home}/${config_file}"
+    done
+}
+[[ -v TEST_FLAG ]] || readonly -f gpg::install
+
+#--------------------------------------------------
+# Function:
+#   gpg::uninstall
+#
+# Description:
+#   Reverses gpg::install. Delegates removal of each config symlink to
+#   link::remove (which leaves anything that is not our link alone). The
+#   GnuPG home itself is deliberately left in place even when this installer
+#   created it: it may since have gained a keyring, trustdb or agent state,
+#   and removing it risks destroying keys - so, unlike git's empty stub, it
+#   is never reclaimed. Reads DOTFILES_ROOT and writes under the GnuPG home.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   gpg::uninstall
+#--------------------------------------------------
+gpg::uninstall() {
+    local config_file
+    local gnupg_home
+    local source_dir
+    local -a config_files
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/gpg"
+    gnupg_home="${GNUPGHOME:-${HOME}/.gnupg}"
+    config_files=( gpg.conf gpg-agent.conf )
+
+    output::stage 'GPG'
+
+    for config_file in "${config_files[@]}"
+    do
+        link::remove "${source_dir}/${config_file}" "${gnupg_home}/${config_file}"
+    done
+}
+[[ -v TEST_FLAG ]] || readonly -f gpg::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   gpg::main [<command>]
+#
+# Description:
+#   Entry point for the gpg installer. Skips silently when gpg is not
+#   installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be
+#   run directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when gpg is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   gpg::main install
+#--------------------------------------------------
+gpg::main() {
+    local command
+
+    command="${1:-install}"
+
+    gpg::available || return 0
+
+    case "${command}" in
+        install)
+            gpg::install
+            ;;
+        uninstall)
+            gpg::uninstall
+            ;;
+        *)
+            output::fatal "gpg: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f gpg::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/gpg → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || gpg::main "$@"
