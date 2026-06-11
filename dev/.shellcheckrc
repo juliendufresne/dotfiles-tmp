@@ -1,0 +1,86 @@
+# https://github.com/koalaman/shellcheck/wiki
+
+# About optional checks
+# Every optional checks should be enabled here. You can disable them in files if
+# it's really necessary or make a collective choice to disable one here by
+# commenting out the enable line
+# run `shellcheck --list-optional` to get the list of every optional checks
+
+# Look for 'source'd files relative to the checked script
+source-path=SCRIPTDIR
+# relative to where we run shellcheck (the repository root, i.e. /work inside
+# the dev toolbox container) — shared bash libraries live under lib/
+source-path=lib
+
+# Allows or disallows shellcheck to include the files pointed-to by the source or . statements while checking.
+# external-sources=false disables this, which is the default.
+# or external-sources=false and use `shellcheck -x`
+external-sources=true
+
+#name:    add-default-case
+#desc:    Suggest adding a default case in `case` statements
+#example: case $? in 0) echo 'Success';; esac
+#fix:     case $? in 0) echo 'Success';; *) echo 'Fail' ;; esac
+enable=add-default-case # SC2249
+
+# name:    avoid-negated-conditions
+# desc:    Suggest removing unnecessary comparison negations
+# example: [ ! "$var" -eq 1 ]
+# fix:     [ "$var" -ne 1 ]
+enable=avoid-negated-conditions # SC2335
+
+#name:    avoid-nullary-conditions
+#desc:    Suggest explicitly using -n in `[ $var ]`
+#example: [ "$var" ]
+#fix:     [ -n "$var" ]
+enable=avoid-nullary-conditions # SC2243
+
+#name:    check-extra-masked-returns
+#desc:    Check for additional cases where exit codes are masked
+#example: rm -r "$(get_chroot_dir)/home"
+#fix:     set -e; dir="$(get_chroot_dir)"; rm -r "$dir/home"
+enable=check-extra-masked-returns # SC2155, SC2312
+
+#name:    check-set-e-suppressed
+#desc:    Notify when set -e is suppressed during function invocation
+#example: set -e; func() { cp *.txt ~/backup; rm *.txt; }; func && echo ok
+#fix:     set -e; func() { cp *.txt ~/backup; rm *.txt; }; func; echo ok
+#enable=check-set-e-suppressed # SC2310, SC2311
+
+#name:    check-unassigned-uppercase
+#desc:    Warn when uppercase variables are unassigned
+#example: echo $VAR
+#fix:     VAR=hello; echo $VAR
+enable=check-unassigned-uppercase # SC2154
+
+#name:    deprecate-which
+#desc:    Suggest 'command -v' instead of 'which'
+#example: which javac
+#fix:     command -v javac
+enable=deprecate-which # SC2230
+
+#name:    quote-safe-variables
+#desc:    Suggest quoting variables without metacharacters
+#example: var=hello; echo $var
+#fix:     var=hello; echo "$var"
+enable=quote-safe-variables # SC2223, SC2248
+
+#name:    require-double-brackets
+#desc:    Require [[ and warn about [ in Bash/Ksh
+#example: [ -e /etc/issue ]
+#fix:     [[ -e /etc/issue ]]
+enable=require-double-brackets # SC2292
+
+#name:    require-variable-braces
+#desc:    Suggest putting braces around all variable references
+#example: var=hello; echo $var
+#fix:     var=hello; echo ${var}
+enable=require-variable-braces # SC2250
+
+#name:    useless-use-of-cat
+#desc:    Check for Useless Use Of Cat (UUOC)
+#example: cat foo | grep bar
+#fix:     grep bar foo
+enable=useless-use-of-cat # SC2002
+
+
