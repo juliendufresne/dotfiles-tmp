@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   fish::available
+#
+# Description:
+#   Reports whether fish is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own. The executable is named `fish`, so that is
+#   what is probed.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a fish executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   fish::available || return 0
+#--------------------------------------------------
+fish::available() {
+    command -v fish > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f fish::available
+
+#--------------------------------------------------
+# Function:
+#   fish::install
+#
+# Description:
+#   Installs the shared fish configuration by symlinking the
+#   share/dotfiles/fish directory to ${XDG_CONFIG_HOME:-~/.config}/fish, so
+#   its config.fish, conf.d/ and functions/ become the config fish loads on
+#   startup. fish is XDG-native: it reads ${XDG_CONFIG_HOME:-~/.config}/fish
+#   with no extra setup, so unlike git this installer needs no home-level
+#   stub file - the single symlink is the whole installation. Delegates the
+#   link (with its backup-and-converge behavior) to link::create.
+#
+#   fish also *writes* into its config directory at runtime - most notably
+#   fish_variables (universal variables, e.g. the fish_add_path call in
+#   conf.d/00-paths.fish), and on a one-time fish >= 4.3 upgrade the
+#   conf.d/fish_frozen_*.fish migration snapshots. Because the directory is
+#   symlinked whole, those land back in the repo, so share/dotfiles/fish
+#   carries a .gitignore that keeps that per-machine state out of version
+#   control. The repo ships no fish_variables: the configuration depends on
+#   none, and it is pure machine state. Reads DOTFILES_ROOT and writes under
+#   the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::create on failure
+#
+# Example:
+#   fish::install
+#--------------------------------------------------
+fish::install() {
+    local source_dir
+    local xdg_base
+    local xdg_fish
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/fish"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_fish="${xdg_base}/fish"
+
+    output::stage 'Fish'
+
+    link::create "${source_dir}" "${xdg_fish}"
+}
+[[ -v TEST_FLAG ]] || readonly -f fish::install
+
+#--------------------------------------------------
+# Function:
+#   fish::uninstall
+#
+# Description:
+#   Reverses fish::install. Delegates removal of the
+#   ${XDG_CONFIG_HOME:-~/.config}/fish symlink to link::remove (which leaves
+#   anything that is not our link alone). There is no home-level stub to
+#   clean up, so this is the whole reversal. Any per-machine state fish wrote
+#   through the link (fish_variables and friends) lives in the repo working
+#   tree, gitignored, and is left untouched. Reads DOTFILES_ROOT and writes
+#   under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   fish::uninstall
+#--------------------------------------------------
+fish::uninstall() {
+    local source_dir
+    local xdg_base
+    local xdg_fish
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/fish"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_fish="${xdg_base}/fish"
+
+    output::stage 'Fish'
+
+    link::remove "${source_dir}" "${xdg_fish}"
+}
+[[ -v TEST_FLAG ]] || readonly -f fish::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   fish::main [<command>]
+#
+# Description:
+#   Entry point for the fish installer. Skips silently when fish is not
+#   installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be
+#   run directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when fish is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   fish::main install
+#--------------------------------------------------
+fish::main() {
+    local command
+
+    command="${1:-install}"
+
+    fish::available || return 0
+
+    case "${command}" in
+        install)
+            fish::install
+            ;;
+        uninstall)
+            fish::uninstall
+            ;;
+        *)
+            output::fatal "fish: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f fish::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/fish → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || fish::main "$@"

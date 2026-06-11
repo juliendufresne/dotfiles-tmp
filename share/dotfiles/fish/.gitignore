@@ -1,0 +1,17 @@
+# Machine-local fish state, written through the ~/.config/fish symlink at
+# runtime. This directory is symlinked whole into place, so fish writes these
+# files back into the repo; keep them out of version control. None of them are
+# part of the configuration - they are per-machine state fish manages itself.
+
+# Universal variables (set -U). fish 4.x no longer creates this on a fresh
+# install, but it still appears the moment anything runs `set -U` (e.g.
+# fish_add_path in conf.d/00-paths.fish) or on the one-time fish >= 4.3
+# universal-to-global migration.
+fish_variables
+
+# One-time fish >= 4.3 migration snapshots of the theme and key bindings.
+conf.d/fish_frozen_*.fish
+
+# Generated completions. fish 4.0+ writes these to ~/.cache/fish; older fish
+# wrote them here. Ignored so neither location ends up tracked.
+completions/
