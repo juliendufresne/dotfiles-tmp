@@ -486,6 +486,116 @@ Describe 'bin/enable-push'
     End
 
     # ==========================================================================
+    # enable_push::prompt_value
+    # ==========================================================================
+    Describe 'enable_push::prompt_value'
+
+        It 'returns the typed value'
+            Data
+                #|Custom Value
+            End
+            When call enable_push::prompt_value 'Label' 'thedefault'
+            The status should be success
+            The stdout should equal 'Custom Value'
+            The stderr should include 'Label [thedefault]:'
+        End
+
+        It 'returns the default on an empty reply'
+            Data
+                #|
+            End
+            When call enable_push::prompt_value 'Label' 'thedefault'
+            The status should be success
+            The stdout should equal 'thedefault'
+            The stderr should include '[thedefault]'
+        End
+
+    End
+
+    # ==========================================================================
+    # enable_push::configure_identity
+    # ==========================================================================
+    Describe 'enable_push::configure_identity'
+
+        It 'writes the local identity when it differs from the global default'
+            git() {
+                case "$*" in
+                    *'config user.name') printf 'Global Name\n' ;;
+                    *'config user.email') printf 'global@example.com\n' ;;
+                    *) printf 'git %s\n' "$*" ;;
+                esac
+            }
+            enable_push::prompt_value() { printf '%s-new\n' "$2"; }
+
+            When call enable_push::configure_identity /repo
+            The status should be success
+            The stdout should include 'git -C /repo config --local user.name Global Name-new'
+            The stdout should include 'git -C /repo config --local user.email global@example.com-new'
+            The stderr should be blank
+        End
+
+        It 'leaves the local identity unset when the global default is kept'
+            git() {
+                case "$*" in
+                    *'config user.name') printf 'Global Name\n' ;;
+                    *'config user.email') printf 'global@example.com\n' ;;
+                    *) printf 'git %s\n' "$*" ;;
+                esac
+            }
+            enable_push::prompt_value() { printf '%s\n' "$2"; }
+
+            When call enable_push::configure_identity /repo
+            The status should be success
+            The stdout should include 'user.name unchanged'
+            The stdout should not include '--local'
+            The stderr should be blank
+        End
+
+    End
+
+    # ==========================================================================
+    # enable_push::main
+    # ==========================================================================
+    Describe 'enable_push::main'
+
+        enable_push::configure_remote() { printf 'remote %s\n' "$*"; }
+        enable_push::configure_signing_key() { printf 'signing %s\n' "$*"; }
+        enable_push::configure_identity() { printf 'identity %s\n' "$*"; }
+
+        It 'fails when git is not installed'
+            command() { return 1; }
+
+            When call enable_push::main
+            The status should equal 1
+            The stdout should include '▶ Repository'
+            The stderr should include 'git is not installed'
+        End
+
+        It 'fails when there is no origin remote'
+            command() { return 0; }
+            git() { return 1; }
+
+            When call enable_push::main
+            The status should equal 1
+            The stdout should include '▶ Repository'
+            The stderr should include 'no origin remote'
+        End
+
+        It 'runs the remote, signing and identity steps in order'
+            command() { return 0; }
+            git() { printf 'https://github.com/owner/repo.git\n'; }
+
+            When call enable_push::main
+            The status should be success
+            The stdout should include 'remote'
+            The stdout should include 'signing'
+            The stdout should include 'identity'
+            The stderr should be blank
+        End
+
+    End
+
+    # ==========================================================================
     # constants
     # ==========================================================================
     Describe 'constants'

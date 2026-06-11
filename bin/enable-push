@@ -604,6 +604,106 @@ enable_push::configure_signing_key() {
     output::success "configured commit and tag signing with ${fingerprint}"
 }
 [[ -v TEST_FLAG ]] || readonly -f enable_push::configure_signing_key
+
+#--------------------------------------------------
+# Function:
+#   enable_push::prompt_value <prompt> <default>
+#
+# Description:
+#   Reads a single value, offering a default. Writes "<prompt> [<default>]: "
+#   to stderr and reads one line from stdin; prints the entered text to
+#   stdout, or the default when the reply is empty. The caller compares the
+#   result against the default to decide whether anything needs to change.
+#
+# Arguments:
+#   <prompt>   The label shown before the bracketed default
+#   <default>  The value used when the reply is empty
+#
+# Returns:
+#   0 always
+#
+# Example:
+#   name="$( enable_push::prompt_value 'user.name' "${current}" )"
+#--------------------------------------------------
+enable_push::prompt_value() {
+    local default
+    local prompt
+    local reply
+
+    prompt="$1"
+    default="$2"
+
+    printf '%s [%s]: ' "${prompt}" "${default}" >&2
+    read -r reply || reply=''
+
+    if [[ -z "${reply}" ]]
+    then
+        printf '%s\n' "${default}"
+
+        return 0
+    fi
+
+    printf '%s\n' "${reply}"
+}
+[[ -v TEST_FLAG ]] || readonly -f enable_push::prompt_value
+
+#--------------------------------------------------
+# Function:
+#   enable_push::configure_identity <repo-root>
+#
+# Description:
+#   Sets the repository's committer identity, defaulting to the effective git
+#   config. Prompts for user.name and user.email, each pre-filled with the
+#   value git already resolves for the repository (whether it comes from the
+#   global file, the system config or a conditional include); when the answer
+#   differs from that default it writes the value to the repository's local
+#   config, and when the default is kept it leaves the local config alone so
+#   the inherited value keeps showing through. Reads the effective git config;
+#   writes the local git config through git and reports through the output
+#   library; prompts on stderr.
+#
+# Arguments:
+#   <repo-root>  Path to the git working tree to configure
+#
+# Returns:
+#   0 on success
+#   N propagated from git config on failure
+#
+# Example:
+#   enable_push::configure_identity "${root}"
+#--------------------------------------------------
+enable_push::configure_identity() {
+    local email
+    local email_default
+    local name
+    local name_default
+    local repo_root
+
+    repo_root="$1"
+
+    name_default="$( git -C "${repo_root}" config user.name 2>/dev/null )" || name_default=''
+    email_default="$( git -C "${repo_root}" config user.email 2>/dev/null )" || email_default=''
+
+    name="$( enable_push::prompt_value 'Git user.name' "${name_default}" )"
+    if [[ -n "${name}" && "${name}" != "${name_default}" ]]
+    then
+        git -C "${repo_root}" config --local user.name "${name}"
+        output::success "set user.name to ${name}"
+    else
+        output::info 'user.name unchanged (using the inherited default)'
+    fi
+
+    email="$( enable_push::prompt_value 'Git user.email' "${email_default}" )"
+    if [[ -n "${email}" && "${email}" != "${email_default}" ]]
+    then
+        git -C "${repo_root}" config --local user.email "${email}"
+        output::success "set user.email to ${email}"
+    else
+        output::info 'user.email unchanged (using the inherited default)'
+    fi
+}
+[[ -v TEST_FLAG ]] || readonly -f enable_push::configure_identity
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 #--------------------------------------------------
@@ -653,6 +753,7 @@ enable_push::main() {
 
     enable_push::configure_remote "${repo_root}" "${origin_url}"
     enable_push::configure_signing_key "${repo_root}"
+    enable_push::configure_identity "${repo_root}"
 }
 [[ -v TEST_FLAG ]] || readonly -f enable_push::main
 
