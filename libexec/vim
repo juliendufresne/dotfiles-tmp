@@ -1,0 +1,395 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   vim::available
+#
+# Description:
+#   Reports whether vim is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a vim executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   vim::available || return 0
+#--------------------------------------------------
+vim::available() {
+    command -v vim > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::available
+
+#--------------------------------------------------
+# Function:
+#   vim::has_curl
+#
+# Description:
+#   Reports whether curl is available, the downloader the plugin bootstrap
+#   uses to fetch vim-plug. Kept separate from vim::install_plugins so the
+#   "no downloader" path is a single, testable predicate. Uses `command -v`.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a curl executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   vim::has_curl || return 0
+#--------------------------------------------------
+vim::has_curl() {
+    command -v curl > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::has_curl
+
+#--------------------------------------------------
+# Function:
+#   vim::download_plug <url> <dest>
+#
+# Description:
+#   Downloads the vim-plug script from <url> to <dest>, creating any missing
+#   parent directories. A thin, mockable wrapper around curl so the network
+#   call is isolated from the orchestration logic. Writes the file at <dest>;
+#   prints nothing of its own (curl runs silently).
+#
+# Arguments:
+#   <url>   URL of the vim-plug script
+#   <dest>  Path to write plug.vim to
+#
+# Returns:
+#   0 on a successful download
+#   N propagated from curl on failure
+#
+# Example:
+#   vim::download_plug "${plug_url}" "${plug_file}"
+#--------------------------------------------------
+vim::download_plug() {
+    local dest
+    local url
+
+    url="$1"
+    dest="$2"
+
+    curl -fsSL --create-dirs -o "${dest}" "${url}"
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::download_plug
+
+#--------------------------------------------------
+# Function:
+#   vim::plug_install_headless <vimrc>
+#
+# Description:
+#   Runs `:PlugInstall --sync` in a headless vim so a plain `dotfiles
+#   install` leaves every declared plugin cloned and ready. vim-plug's
+#   installer drives the terminal and clones in parallel, so vim must run
+#   under a pseudo-terminal: with a redirected stdin it reads EOF and aborts
+#   mid-clone (the classic "PlugInstall did nothing" failure). `script`
+#   provides that pty. Its calling convention differs by platform, so the
+#   command is dispatched on `uname`: util-linux takes the command as a `-c`
+#   string with the typescript file last, while the BSD/macOS script takes
+#   the typescript file first and the command as trailing argv. The
+#   typescript is discarded to /dev/null and all output is silenced.
+#
+# Arguments:
+#   <vimrc>  Path to the vimrc vim should load (the linked ~/.vim/vimrc)
+#
+# Returns:
+#   0 when PlugInstall completed
+#   N propagated from script/vim on failure
+#
+# Example:
+#   vim::plug_install_headless "${HOME}/.vim/vimrc"
+#--------------------------------------------------
+vim::plug_install_headless() {
+    local kernel
+    local vimrc
+
+    vimrc="$1"
+    kernel="$( uname -s )"
+
+    if [[ "${kernel}" != 'Linux' ]]
+    then
+        script -q /dev/null vim -u "${vimrc}" -i NONE +'PlugInstall --sync' +qall > /dev/null 2>&1
+
+        return $?
+    fi
+
+    script -qec "vim -u '${vimrc}' -i NONE +'PlugInstall --sync' +qall" /dev/null > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::plug_install_headless
+
+#--------------------------------------------------
+# Function:
+#   vim::install_plugins
+#
+# Description:
+#   Bootstraps the vim plugins so `bin/dotfiles` leaves vim ready to use, not
+#   just symlinked. Downloads vim-plug (once) to ${XDG_DATA_HOME:-~/.local/
+#   share}/vim/autoload/plug.vim - deliberately outside ~/.vim, which is the
+#   dotfiles symlink - then runs :PlugInstall headlessly. Every step is
+#   best-effort: a missing curl, a failed download or a failed install all
+#   degrade to an informational line and a 0 return, so a transient network
+#   problem never fails the whole install. Honors DOTFILES_DRY_RUN (describe
+#   only) and DOTFILES_SKIP_VIM_PLUGINS (skip entirely - the hermetic
+#   install-test sets it so CI never clones from the network). Reports
+#   through the output library and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 always (plugin bootstrap is best-effort and never fails the install)
+#
+# Example:
+#   vim::install_plugins
+#--------------------------------------------------
+vim::install_plugins() {
+    local plug_file
+    local plug_home
+    local plug_url
+    local vimrc
+
+    if [[ -n "${DOTFILES_SKIP_VIM_PLUGINS:-}" ]]
+    then
+        output::info 'skipping vim plugins (DOTFILES_SKIP_VIM_PLUGINS set)'
+
+        return 0
+    fi
+
+    plug_home="${XDG_DATA_HOME:-${HOME}/.local/share}/vim"
+    plug_file="${plug_home}/autoload/plug.vim"
+    plug_url='https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
+    vimrc="${HOME}/.vim/vimrc"
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would install vim plugins under ${plug_home}"
+
+        return 0
+    fi
+
+    if ! vim::has_curl
+    then
+        output::info 'curl not found - skipping vim plugins'
+
+        return 0
+    fi
+
+    if [[ ! -f "${plug_file}" ]]
+    then
+        if ! vim::download_plug "${plug_url}" "${plug_file}"
+        then
+            output::info 'could not download vim-plug - skipping vim plugins'
+
+            return 0
+        fi
+
+        output::success "downloaded vim-plug to ${plug_file}"
+    fi
+
+    if vim::plug_install_headless "${vimrc}"
+    then
+        output::success 'installed vim plugins'
+
+        return 0
+    fi
+
+    output::info 'vim plugin install reported an issue - continuing'
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::install_plugins
+
+#--------------------------------------------------
+# Function:
+#   vim::install
+#
+# Description:
+#   Installs the shared vim configuration by symlinking the
+#   share/dotfiles/vim directory to ~/.vim, so its `vimrc` becomes the
+#   config vim loads on startup, then bootstraps the plugins. vim is
+#   HOME-native, not XDG: when no ~/.vimrc exists it auto-loads
+#   ${HOME}/.vim/vimrc, so unlike git this installer needs no home-level
+#   stub - the single symlink is the whole config installation. Delegates
+#   the link (with its backup-and-converge behavior) to link::create, then
+#   hands off to vim::install_plugins (best-effort). Reads DOTFILES_ROOT and
+#   writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::create on failure
+#
+# Example:
+#   vim::install
+#--------------------------------------------------
+vim::install() {
+    local home_vim
+    local source_dir
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/vim"
+    home_vim="${HOME}/.vim"
+
+    output::stage 'Vim'
+
+    link::create "${source_dir}" "${home_vim}"
+
+    vim::install_plugins
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::install
+
+#--------------------------------------------------
+# Function:
+#   vim::remove_plugins
+#
+# Description:
+#   Removes the vim-plug data tree (plug.vim and the cloned plugins) under
+#   ${XDG_DATA_HOME:-~/.local/share}/vim that vim::install_plugins created,
+#   so uninstall reverses install fully. Leaves the directory alone when it
+#   does not exist, so a config-only install (plugins skipped or never
+#   bootstrapped) reverses silently. Honors DOTFILES_DRY_RUN. Reports
+#   through the output library and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success, or when there is nothing to remove
+#   N propagated from rm on failure
+#
+# Example:
+#   vim::remove_plugins
+#--------------------------------------------------
+vim::remove_plugins() {
+    local plug_home
+
+    plug_home="${XDG_DATA_HOME:-${HOME}/.local/share}/vim"
+
+    if [[ ! -d "${plug_home}" ]]
+    then
+        return 0
+    fi
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would remove ${plug_home}"
+
+        return 0
+    fi
+
+    rm -rf -- "${plug_home}"
+    output::success "removed ${plug_home}"
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::remove_plugins
+
+#--------------------------------------------------
+# Function:
+#   vim::uninstall
+#
+# Description:
+#   Reverses vim::install. Delegates removal of the ~/.vim symlink to
+#   link::remove (which leaves anything that is not our link alone), then
+#   removes the vim-plug data tree the install bootstrapped. There is no
+#   home-level stub to clean up. Reads DOTFILES_ROOT and writes under the
+#   home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   vim::uninstall
+#--------------------------------------------------
+vim::uninstall() {
+    local home_vim
+    local source_dir
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/vim"
+    home_vim="${HOME}/.vim"
+
+    output::stage 'Vim'
+
+    link::remove "${source_dir}" "${home_vim}"
+
+    vim::remove_plugins
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   vim::main [<command>]
+#
+# Description:
+#   Entry point for the vim installer. Skips silently when vim is not
+#   installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be
+#   run directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when vim is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   vim::main install
+#--------------------------------------------------
+vim::main() {
+    local command
+
+    command="${1:-install}"
+
+    vim::available || return 0
+
+    case "${command}" in
+        install)
+            vim::install
+            ;;
+        uninstall)
+            vim::uninstall
+            ;;
+        *)
+            output::fatal "vim: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f vim::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/vim → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || vim::main "$@"

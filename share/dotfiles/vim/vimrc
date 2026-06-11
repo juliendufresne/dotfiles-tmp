@@ -1,0 +1,16 @@
+" Shared vim configuration.
+"
+" vim auto-loads this file as ~/.vim/vimrc when no ~/.vimrc exists, so the
+" single ~/.vim symlink the installer creates is the whole installation. The
+" config is split into one file per concern under ~/.vim/config, sourced
+" explicitly below in load order: settings, then keybindings, the plugin
+" declarations, their configuration and finally the theme. The ~/.vim path
+" resolves through the installer's symlink.
+
+let s:config_dir = expand('~/.vim/config')
+
+execute 'source ' . s:config_dir . '/settings.vim'
+execute 'source ' . s:config_dir . '/keybindings.vim'
+execute 'source ' . s:config_dir . '/plugins.vim'
+execute 'source ' . s:config_dir . '/plugin-config.vim'
+execute 'source ' . s:config_dir . '/theme.vim'
