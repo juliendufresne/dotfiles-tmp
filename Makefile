@@ -141,6 +141,15 @@ test-shell-focus: tools-ensure ## Run only the shellspec blocks marked with fDes
 	$(_DOCKER_DEV_TOOLS_RUN) \
 		shellspec --focus dev/test/shell
 
+##@ ── Coverage ────────────────────────────────────────────────────────────────
+
+.PHONY: coverage-shell
+coverage-shell: tools-ensure ## Run the shellspec suite under kcov; HTML report in var/coverage/shell
+	@rm -rf var/coverage/shell && mkdir -p var/coverage/shell
+	@$(call log,shellspec --kcov via $(DEV_TOOL_IMAGE))
+	$(_DOCKER_DEV_TOOLS_RUN_RW) \
+		shellspec --kcov dev/test/shell
+
 ##@ ── Install test ───────────────────────────────────────────────────────────
 
 # End-to-end install/uninstall test on a fresh OS. Each distro gets its own
