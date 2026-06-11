@@ -1,0 +1,93 @@
+name: Install test
+
+# End-to-end install/uninstall test of the real bin/dotfiles lifecycle on fresh
+# operating systems. Separate from ci.yaml (lint/shellspec): this exercises the
+# installer on actual distros rather than unit-testing functions in isolation.
+#
+# The Linux matrix runs each distro through its Docker image (make
+# install-test-<distro>); macOS cannot run in Docker, so it runs the same runner
+# natively on a macos-latest runner. The runner script (dev/test/install/run.sh)
+# is identical across every leg.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: linux (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ubuntu, debian, fedora, alpine, arch]
+    steps:
+      - name: Checkout
+        # https://github.com/actions/checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run install-test lifecycle
+        run: make install-test-${{ matrix.distro }}
+
+  macos:
+    name: macos
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        # https://github.com/actions/checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # macOS ships bash 3.2 as /bin/bash, but the installer requires >= 4.2.
+      # Install a current bash plus every tool the installer links config for -
+      # the runner only asserts a tool that is present (command -v gate), so a
+      # tool missing here is silently skipped and goes untested on macOS.
+      # Homebrew's bin precedes /usr/bin on the runner's PATH, so the `env bash`
+      # in both the runner and the bin/dotfiles it spawns resolves to this bash,
+      # not 3.2.
+      #
+      # The package list is not hard-coded: it comes from the same
+      # tools.d/*.sh manifests the Linux provisioner uses, each exposing
+      # `<tool>_it_packages <pkgmgr>`, with `brew` as the macOS manager. This
+      # keeps a single source of truth, so dropping in a new installer's
+      # manifest covers macOS automatically with nothing here to drift.
+      - name: Install bash and configured tools
+        run: |
+          packages=""
+          for manifest in dev/test/install/tools.d/*.sh; do
+            # Source for the package map only; the bash-only assertion half is
+            # guarded behind DOTFILES_IT_BASH, which we deliberately leave unset.
+            # shellcheck source=/dev/null
+            . "${manifest}"
+            tool="${manifest##*/}"
+            tool="${tool%.sh}"
+            packages="${packages} $("${tool}_it_packages" brew)"
+          done
+          echo "installing: bash${packages}"
+          # Intentional word-splitting of the package list.
+          # shellcheck disable=SC2086
+          brew install bash ${packages}
+
+      # coreutils installs the GNU tools g-prefixed (gdircolors, gls); their
+      # unprefixed aliases live in this gnubin dir. Put it first on PATH so
+      # `dircolors` resolves to the GNU binary - both the install-test runner's
+      # discovery gate and the dircolors manifest's assertion key on the bare
+      # name. This mirrors what conf.d/00-paths.fish does in an interactive
+      # fish shell.
+      - name: Prefer GNU coreutils on PATH
+        run: echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >> "${GITHUB_PATH}"
+
+      # Canary: confirm `env bash` resolves to the Homebrew bash (>= 4.2), not
+      # system 3.2. Pipe-free so the runner's `pipefail` can't SIGPIPE-fail it.
+      - name: Show bash version
+        run: |
+          command -v bash
+          bash -c 'printf "%s\n" "${BASH_VERSION}"'
+
+      # Run the same runner the Docker legs use, against the checked-out tree.
+      - name: Run install-test lifecycle
+        run: dev/test/install/run.sh
