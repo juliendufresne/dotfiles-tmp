@@ -1,0 +1,129 @@
+name: CI
+
+# Lint and test via the same dev toolbox image as locally. `make lint` bundles
+# both checks for a one-shot local run; CI calls the sub-targets as separate
+# steps so a failure points straight at shell vs. workflow format (see the
+# Makefile and dev/docker/dev-tools/Dockerfile).
+#
+# The image is built once in the build-image job and shared with the lint and
+# test jobs through the Actions cache, so it is built at most once per run
+# instead of once per job. The cache is the single source of truth: build-image
+# guarantees the tarball is in the cache (restoring it on a hit, building and
+# saving it on a miss) before its dependents start, and they restore it from
+# that same cache. Caching across runs also means an unchanged Dockerfile skips
+# the (kcov-from-source) build entirely.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-image:
+    name: build image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # https://github.com/actions/checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # A cache hit restores the saved image tarball and skips the build step
+      # below. The key tracks the inputs that change what gets built — the
+      # Dockerfile and the optional .env override (which can change the version
+      # build-args) — so a rebuild happens only when those actually change.
+      - name: Cache dev toolbox image
+        id: image-cache
+        # https://github.com/actions/cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: var/dev-tools-image.tar.gz
+          key: dev-tools-image-${{ runner.os }}-${{ hashFiles('dev/docker/dev-tools/Dockerfile', '.env') }}
+
+      # On a miss the cache step above saves this tarball in its post-job step,
+      # making it available to the dependent jobs.
+      - name: Build and save dev toolbox image
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          make tools-build
+          mkdir -p var
+          docker save dotfiles-dev-tools | gzip > var/dev-tools-image.tar.gz
+
+  lint:
+    name: lint
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # https://github.com/actions/checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Restore the image the build-image job left in the cache. The key must
+      # match the one in build-image; fail-on-cache-miss turns a missing entry
+      # into a clear error instead of a confusing docker load failure below.
+      - name: Restore dev toolbox image
+        # https://github.com/actions/cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: var/dev-tools-image.tar.gz
+          key: dev-tools-image-${{ runner.os }}-${{ hashFiles('dev/docker/dev-tools/Dockerfile', '.env') }}
+          fail-on-cache-miss: true
+
+      # Load the prebuilt image and stamp tools-ensure as fresh so make uses it
+      # as-is instead of rebuilding (see the Makefile tools-ensure target).
+      - name: Load dev toolbox image
+        run: |
+          gunzip -c var/dev-tools-image.tar.gz | docker load
+          touch var/.tools-ensure.stamp
+
+      - name: Check shell file format
+        run: make lint-shell
+
+      - name: Check GitHub workflows file format
+        run: make lint-github-workflows
+
+  test:
+    name: test
+    needs: build-image
+    runs-on: ubuntu-latest
+    # pull-requests: write lets the coverage step post its sticky PR comment.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        # https://github.com/actions/checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Restore the image the build-image job left in the cache. The key must
+      # match the one in build-image; fail-on-cache-miss turns a missing entry
+      # into a clear error instead of a confusing docker load failure below.
+      - name: Restore dev toolbox image
+        # https://github.com/actions/cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: var/dev-tools-image.tar.gz
+          key: dev-tools-image-${{ runner.os }}-${{ hashFiles('dev/docker/dev-tools/Dockerfile', '.env') }}
+          fail-on-cache-miss: true
+
+      # Load the prebuilt image and stamp tools-ensure as fresh so make uses it
+      # as-is instead of rebuilding (see the Makefile tools-ensure target).
+      - name: Load dev toolbox image
+        run: |
+          gunzip -c var/dev-tools-image.tar.gz | docker load
+          touch var/.tools-ensure.stamp
+
+      # Runs the shellspec suite under kcov: this both gates on test failures
+      # and produces the coverage report, so a separate test-shell step is
+      # redundant.
+      - name: Run shell tests with coverage
+        run: make coverage-shell
+
+      - name: Report shell coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: dev/bin/coverage-report.sh
