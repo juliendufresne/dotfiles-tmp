@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   tmux::available
+#
+# Description:
+#   Reports whether tmux is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a tmux executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   tmux::available || return 0
+#--------------------------------------------------
+tmux::available() {
+    command -v tmux > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f tmux::available
+
+#--------------------------------------------------
+# Function:
+#   tmux::install
+#
+# Description:
+#   Installs the shared tmux configuration by symlinking the
+#   share/dotfiles/tmux directory to ~/.config/tmux (the XDG config home),
+#   so its `tmux.conf` becomes the config tmux loads on server start. tmux
+#   is XDG-native: it reads ${XDG_CONFIG_HOME:-~/.config}/tmux/tmux.conf
+#   with no extra setup, so unlike git this installer needs no home-level
+#   stub file - the single symlink is the whole installation. Delegates the
+#   link (with its backup-and-converge behavior) to link::create. Reads
+#   DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::create on failure
+#
+# Example:
+#   tmux::install
+#--------------------------------------------------
+tmux::install() {
+    local source_dir
+    local xdg_base
+    local xdg_tmux
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/tmux"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_tmux="${xdg_base}/tmux"
+
+    output::stage 'Tmux'
+
+    link::create "${source_dir}" "${xdg_tmux}"
+}
+[[ -v TEST_FLAG ]] || readonly -f tmux::install
+
+#--------------------------------------------------
+# Function:
+#   tmux::uninstall
+#
+# Description:
+#   Reverses tmux::install. Delegates removal of the ~/.config/tmux symlink
+#   to link::remove (which leaves anything that is not our link alone).
+#   There is no home-level stub to clean up, so this is the whole reversal.
+#   Reads DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   tmux::uninstall
+#--------------------------------------------------
+tmux::uninstall() {
+    local source_dir
+    local xdg_base
+    local xdg_tmux
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/tmux"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_tmux="${xdg_base}/tmux"
+
+    output::stage 'Tmux'
+
+    link::remove "${source_dir}" "${xdg_tmux}"
+}
+[[ -v TEST_FLAG ]] || readonly -f tmux::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   tmux::main [<command>]
+#
+# Description:
+#   Entry point for the tmux installer. Skips silently when tmux is not
+#   installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be
+#   run directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when tmux is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   tmux::main install
+#--------------------------------------------------
+tmux::main() {
+    local command
+
+    command="${1:-install}"
+
+    tmux::available || return 0
+
+    case "${command}" in
+        install)
+            tmux::install
+            ;;
+        uninstall)
+            tmux::uninstall
+            ;;
+        *)
+            output::fatal "tmux: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f tmux::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/tmux → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || tmux::main "$@"
