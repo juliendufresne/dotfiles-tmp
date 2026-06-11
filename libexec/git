@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   git::available
+#
+# Description:
+#   Reports whether git is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a git executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   git::available || return 0
+#--------------------------------------------------
+git::available() {
+    command -v git > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f git::available
+
+#--------------------------------------------------
+# Function:
+#   git::ensure_global_config <path>
+#
+# Description:
+#   Ensures an empty ~/.gitconfig exists so `git config --global` writes
+#   land there and never follow our symlink into the dotfiles repo: git
+#   directs those writes to ~/.gitconfig whenever it exists, and only falls
+#   back to ~/.config/git/config (a symlink into the repo) when it does
+#   not. Leaves an existing file untouched. Reports through the output
+#   library and honors DOTFILES_DRY_RUN.
+#
+# Arguments:
+#   <path>  Path to the global config file (~/.gitconfig)
+#
+# Returns:
+#   0 on success, or when the file already exists
+#   N propagated from touch on failure
+#
+# Example:
+#   git::ensure_global_config "${HOME}/.gitconfig"
+#--------------------------------------------------
+git::ensure_global_config() {
+    local global_config
+
+    global_config="$1"
+
+    if [[ -e "${global_config}" ]]
+    then
+        return 0
+    fi
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would create ${global_config}"
+
+        return 0
+    fi
+
+    touch -- "${global_config}"
+    output::info "created ${global_config}"
+}
+[[ -v TEST_FLAG ]] || readonly -f git::ensure_global_config
+
+#--------------------------------------------------
+# Function:
+#   git::install
+#
+# Description:
+#   Installs the shared git configuration by symlinking the whole
+#   share/dotfiles/git directory to ~/.config/git (the XDG config home),
+#   so its `config` becomes git's global config and its `ignore` becomes
+#   the global excludes file. Git reads ~/.config/git/config *before*
+#   ~/.gitconfig, so the shared settings are a base layer that the
+#   machine's own ~/.gitconfig (including any [includeIf] overrides) takes
+#   precedence over. Ensures an empty ~/.gitconfig exists first, then
+#   delegates the link (with its backup-and-converge behavior) to
+#   link::create. Reads DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from git::ensure_global_config or link::create on failure
+#
+# Example:
+#   git::install
+#--------------------------------------------------
+git::install() {
+    local source_dir
+    local xdg_base
+    local xdg_git
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/git"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_git="${xdg_base}/git"
+
+    output::stage 'Git'
+
+    git::ensure_global_config "${HOME}/.gitconfig"
+
+    link::create "${source_dir}" "${xdg_git}"
+}
+[[ -v TEST_FLAG ]] || readonly -f git::install
+
+#--------------------------------------------------
+# Function:
+#   git::remove_empty_global_config <path>
+#
+# Description:
+#   Removes ~/.gitconfig only when it holds no non-whitespace content — so
+#   the empty file git::ensure_global_config created is cleaned up while a
+#   real one is never touched. Reports through the output library and
+#   honors DOTFILES_DRY_RUN.
+#
+# Arguments:
+#   <path>  Path to the global config file (~/.gitconfig)
+#
+# Returns:
+#   0 on success, or when the file is absent or non-empty
+#   N propagated from rm on failure
+#
+# Example:
+#   git::remove_empty_global_config "${HOME}/.gitconfig"
+#--------------------------------------------------
+git::remove_empty_global_config() {
+    local global_config
+
+    global_config="$1"
+
+    if [[ ! -f "${global_config}" ]] || grep -qE '[^[:space:]]' "${global_config}"
+    then
+        return 0
+    fi
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would remove empty ${global_config}"
+
+        return 0
+    fi
+
+    rm -- "${global_config}"
+    output::info "removed empty ${global_config}"
+}
+[[ -v TEST_FLAG ]] || readonly -f git::remove_empty_global_config
+
+#--------------------------------------------------
+# Function:
+#   git::uninstall
+#
+# Description:
+#   Reverses git::install. Delegates removal of the ~/.config/git symlink
+#   to link::remove (which leaves anything that is not our link alone),
+#   then removes ~/.gitconfig only when it is still effectively empty — the
+#   empty file we created with nothing written to it since. Reads
+#   DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove or git::remove_empty_global_config on
+#   failure
+#
+# Example:
+#   git::uninstall
+#--------------------------------------------------
+git::uninstall() {
+    local source_dir
+    local xdg_base
+    local xdg_git
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/git"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_git="${xdg_base}/git"
+
+    output::stage 'Git'
+
+    link::remove "${source_dir}" "${xdg_git}"
+
+    git::remove_empty_global_config "${HOME}/.gitconfig"
+}
+[[ -v TEST_FLAG ]] || readonly -f git::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   git::main [<command>]
+#
+# Description:
+#   Entry point for the git installer. Skips silently when git is not
+#   installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be
+#   run directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when git is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   git::main install
+#--------------------------------------------------
+git::main() {
+    local command
+
+    command="${1:-install}"
+
+    git::available || return 0
+
+    case "${command}" in
+        install)
+            git::install
+            ;;
+        uninstall)
+            git::uninstall
+            ;;
+        *)
+            output::fatal "git: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f git::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/git → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || git::main "$@"

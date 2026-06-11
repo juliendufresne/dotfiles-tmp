@@ -1,0 +1,159 @@
+# Shared git configuration, managed by dotfiles. The installer (libexec/git)
+# symlinks the whole share/dotfiles/git directory to ~/.config/git, so this file
+# becomes ~/.config/git/config — git's XDG global config.
+#
+# Ordering matters. Git reads ~/.config/git/config *before* ~/.gitconfig, and
+# later files win, so everything here is a base layer: the machine's own
+# ~/.gitconfig (in particular [includeIf] per-directory overrides) is read
+# afterwards and takes precedence. The [user] name/email below are the DEFAULT
+# identity, overridable that way; user.signingkey is intentionally absent — it
+# differs per machine and is set there, not versioned here.
+#
+# Machine-specific writes stay out of this repo: the installer ensures
+# ~/.gitconfig exists, and git directs `git config --global` writes to
+# ~/.gitconfig whenever it exists (only falling back to this file otherwise).
+
+[alias]
+    # ——— add ——————————————————————————————————————————————————————————————————
+    a = add
+    ai = add --interactive
+
+    # ——— list aliases —————————————————————————————————————————————————————————
+    alias = "!f() { git config -l | grep alias | cut -c 7- ; }; f"
+
+    # ——— branch ———————————————————————————————————————————————————————————————
+    b = branch --all
+
+    # ——— checkout —————————————————————————————————————————————————————————————
+    co = checkout
+    com = checkout main
+    ours = "!f() { git checkout --ours $@ && git add $@; }; f"
+    theirs = "!f() { git checkout --theirs $@ && git add $@; }; f"
+
+    # ——— commit ———————————————————————————————————————————————————————————————
+    c = commit
+    cm = commit -m
+    can = commit --amend --no-edit
+
+    # ——— diff —————————————————————————————————————————————————————————————————
+    d = diff --check
+
+    # ——— fetch ————————————————————————————————————————————————————————————————
+    f = fetch --all --prune
+
+    # ——— log ——————————————————————————————————————————————————————————————————
+    l = log --oneline
+    lg = log --graph --date=relative --pretty=tformat:'%Cred%h%Creset -%C(auto)%d%Creset %s %Cgreen(%an %ad)%Creset'
+
+    # ——— pull —————————————————————————————————————————————————————————————————
+    pl = pull --rebase
+
+    # ——— push —————————————————————————————————————————————————————————————————
+    ps = push
+    pf = push --force-with-lease
+    pushf = push --force-with-lease
+
+    # ——— rebase ———————————————————————————————————————————————————————————————
+    r = rebase
+    rb = rebase
+    rbc = rebase --continue
+    rbi = rebase -i main
+    rbm = "!f() { [ $(git status --porcelain | wc -l) -eq 0 ] || { echo 'Your current branch have some changes'; return 1; }; (set -x;git checkout ${1-main} && git pull --rebase && git checkout - && git rebase ${1-main}); }; f"
+
+    # ——— retake ———————————————————————————————————————————————————————————————
+    # suppress the current branch and get it from remote
+    # this is mainly useful when rebasing
+    retake = "!f() { [ $(git status --porcelain | wc -l) -eq 0 ] || { echo 'Your current branch have some changes'; return 1; }; branch=$(git branch | grep '^*' | cut -d ' ' -f 2); git checkout main; git fetch --all --prune; git branch -D $branch; git checkout $branch;  }; f"
+
+    # ——— status ———————————————————————————————————————————————————————————————
+    s = status -s
+    st = status
+
+[bash]
+    showInformativeStatus = true
+    showUntrackedFiles = true
+
+[color]
+    ui = auto
+
+[color "branch"]
+    current = brightgreen bold
+    local = green
+    remote = cyan
+
+[color "diff"]
+    meta = yellow
+    frag = blue
+    old = red bold
+    new = green bold
+    whitespace = red reverse
+
+[color "status"]
+    added = green
+    changed = yellow
+    untracked = red
+
+[commit]
+    gpgsign = true
+
+[core]
+    longpaths = true
+
+[credential]
+    helper = store
+
+[diff]
+    # histogram yields more readable, semantically-aligned diffs than the
+    # default myers algorithm; colorMoved highlights moved lines distinctly.
+    algorithm = histogram
+    colorMoved = default
+    renames = true
+
+[fetch]
+	prune = true
+
+[init]
+    defaultBranch = main
+
+[merge]
+    # Show the common ancestor (base) in conflict markers, not just ours/theirs.
+    conflictStyle = zdiff3
+
+[pull]
+    rebase = true
+
+[push]
+    autoSetupRemote = true
+    # Default push should only push the current branch to its push target, regardless of its remote name
+    default = upstream
+    # When pushing, also push tags whose commit-ishs are now reachable upstream
+    followTags = true
+
+[rebase]
+    autoSquash = true
+    autoStash = true
+
+[rerere]
+    # Record conflict resolutions and replay them automatically when the same
+    # conflict recurs (handy with the rebase-heavy workflow above).
+    enabled = true
+
+[status]
+    showUntrackedFiles = all
+
+[tag]
+    gpgSign = true
+    sort = version:refname
+
+[user]
+    name = Julien Dufresne
+    email = git@dfrsn.me
+    # signingkey is not versioned as it might differs from machine to machine
+
+[versionsort]
+    prereleaseSuffix = -pre
+    prereleaseSuffix = .pre
+    prereleaseSuffix = -beta
+    prereleaseSuffix = .beta
+    prereleaseSuffix = -rc
+    prereleaseSuffix = .rc
