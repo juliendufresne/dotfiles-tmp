@@ -79,6 +79,63 @@ link::create() {
 }
 [[ -v TEST_FLAG ]] || readonly -f link::create
 
+#--------------------------------------------------
+# Function:
+#   link::remove <source> <target>
+#
+# Description:
+#   Reverses link::create. Removes <target> only when it is the symlink we
+#   created — one that points at <source> — leaving a real file, directory
+#   or foreign symlink alone. Reports through the output library as
+#   indented lines beneath the stage the caller opened.
+#
+#   Honors the DOTFILES_DRY_RUN global: when it is set to a non-empty
+#   value nothing is written and the intended action is described instead.
+#
+# Arguments:
+#   <source>  Path the symlink is expected to point at
+#   <target>  Path of the symlink to remove
+#
+# Returns:
+#   0 on success, or when nothing of ours is linked
+#   N propagated from rm on failure
+#
+# Example:
+#   link::remove "${source_dir}" "${HOME}/.config/git"
+#--------------------------------------------------
+link::remove() {
+    local current
+    local source
+    local target
+
+    source="$1"
+    target="$2"
+
+    current=''
+    if [[ -L "${target}" ]]
+    then
+        current="$( readlink -- "${target}" )"
+    fi
+
+    if [[ "${current}" != "${source}" ]]
+    then
+        output::info "not linked"
+
+        return 0
+    fi
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would remove link ${target}"
+
+        return 0
+    fi
+
+    rm -- "${target}"
+    output::success "removed link ${target}"
+}
+[[ -v TEST_FLAG ]] || readonly -f link::remove
+
 # ─── Imports ──────────────────────────────────────────────────────────────────
 
 # shellcheck source=output.sh

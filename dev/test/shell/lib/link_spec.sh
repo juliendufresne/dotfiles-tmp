@@ -72,4 +72,61 @@ Describe 'lib/link.sh'
         End
 
     End
+
+    # ==========================================================================
+    # link::remove
+    # ==========================================================================
+    Describe 'link::remove'
+
+        setup() {
+            tmp="$(mktemp -d -t shellspec-link-XXXXXXXXXX)"
+            source="${tmp}/source"
+            target="${tmp}/target"
+
+            mkdir -p "${source}"
+        }
+
+        cleanup() {
+            rm -rf "${tmp}"
+        }
+
+        BeforeEach 'setup'
+        AfterEach 'cleanup'
+
+        It 'removes the symlink it created'
+            ln -s -- "${source}" "${target}"
+
+            When call link::remove "${source}" "${target}"
+            The status should be success
+            The stdout should equal "  ✓ removed link ${target}"
+            The stderr should be blank
+            The path "${target}" should not be exist
+        End
+
+        It 'leaves a target that is not our link alone'
+            other="${tmp}/other"
+            mkdir -p "${other}"
+            ln -s -- "${other}" "${target}"
+
+            When call link::remove "${source}" "${target}"
+            The status should be success
+            The stdout should equal '  • not linked'
+            The stderr should be blank
+            # A foreign link is reported, never followed or removed.
+            The value "$( readlink -- "${target}" )" should equal "${other}"
+        End
+
+        It 'describes the intended removal without writing when DOTFILES_DRY_RUN is set'
+            ln -s -- "${source}" "${target}"
+
+            DOTFILES_DRY_RUN=1
+            When call link::remove "${source}" "${target}"
+            The status should be success
+            The stdout should equal "  • would remove link ${target}"
+            The stderr should be blank
+            The value "$( readlink -- "${target}" )" should equal "${source}"
+        End
+
+    End
+
 End
