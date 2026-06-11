@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log *)",
+      "Bash(make *)"
+    ],
+    "deny": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git cherry-pick *)",
+      "Bash(git revert *)",
+      "Bash(git tag *)"
+    ]
+  },
+  "showClearContextOnPlanAccept": true,
+  "showThinkingSummaries": true,
+  "preferredNotifChannel": "terminal_bell",
+  "autoCompactEnabled": false,
+  "remoteControlAtStartup": false,
+  "skipAutoPermissionPrompt": true,
+  "defaultMode": "auto",
+  "tui": "fullscreen"
+}

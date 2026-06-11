@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   claude::available
+#
+# Description:
+#   Reports whether the Claude Code CLI is installed on this machine. Uses
+#   `command -v`, a POSIX shell builtin available in every bash the
+#   installer targets (including the macOS system bash 3.2), so presence
+#   detection needs no external tool of its own.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a claude executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   claude::available || return 0
+#--------------------------------------------------
+claude::available() {
+    command -v claude > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f claude::available
+
+#--------------------------------------------------
+# Function:
+#   claude::install
+#
+# Description:
+#   Installs the shared Claude Code configuration by symlinking each config
+#   file under share/dotfiles/claude into the Claude config directory
+#   (${CLAUDE_CONFIG_DIR:-~/.claude}). Unlike the XDG tools, claude is
+#   linked file by file rather than as a whole directory: its config home
+#   also holds credentials, history, sessions and other per-machine state,
+#   which must never be replaced by a symlink into the repo. Each link (with
+#   its backup-and-converge behavior, and the parent directory it creates as
+#   needed) is delegated to link::create. Reads DOTFILES_ROOT and writes
+#   under the Claude config directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::create on failure
+#
+# Example:
+#   claude::install
+#--------------------------------------------------
+claude::install() {
+    local config_file
+    local config_home
+    local source_dir
+    local -a config_files
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/claude"
+    config_home="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+    config_files=( settings.json CLAUDE.md )
+
+    output::stage 'Claude'
+
+    for config_file in "${config_files[@]}"
+    do
+        link::create "${source_dir}/${config_file}" "${config_home}/${config_file}"
+    done
+}
+[[ -v TEST_FLAG ]] || readonly -f claude::install
+
+#--------------------------------------------------
+# Function:
+#   claude::uninstall
+#
+# Description:
+#   Reverses claude::install. Delegates removal of each config symlink to
+#   link::remove (which leaves anything that is not our link alone). The
+#   Claude config directory itself is deliberately left in place: it holds
+#   credentials, history and session state, so removing it is never the
+#   installer's to do. Reads DOTFILES_ROOT and writes under the Claude
+#   config directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   claude::uninstall
+#--------------------------------------------------
+claude::uninstall() {
+    local config_file
+    local config_home
+    local source_dir
+    local -a config_files
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/claude"
+    config_home="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+    config_files=( settings.json CLAUDE.md )
+
+    output::stage 'Claude'
+
+    for config_file in "${config_files[@]}"
+    do
+        link::remove "${source_dir}/${config_file}" "${config_home}/${config_file}"
+    done
+}
+[[ -v TEST_FLAG ]] || readonly -f claude::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   claude::main [<command>]
+#
+# Description:
+#   Entry point for the claude installer. Skips silently when the Claude
+#   Code CLI is not installed, otherwise dispatches the lifecycle command
+#   (defaulting to `install`, mirroring the dotfiles entrypoint). Locates
+#   its config by recomputing DOTFILES_ROOT from its own path, so the
+#   installer can be run directly and in isolation without inheriting any
+#   variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when claude is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   claude::main install
+#--------------------------------------------------
+claude::main() {
+    local command
+
+    command="${1:-install}"
+
+    claude::available || return 0
+
+    case "${command}" in
+        install)
+            claude::install
+            ;;
+        uninstall)
+            claude::uninstall
+            ;;
+        *)
+            output::fatal "claude: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f claude::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/claude → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || claude::main "$@"
