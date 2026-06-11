@@ -1,7 +1,95 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ─── Bootstrap ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   dotfiles::require_bash [<major>] [<minor>]
+#
+# Description:
+#   Fails when the running bash is older than 4.2. The installer uses the
+#   `[[ -v ]]` conditional (introduced in bash 4.2) throughout, so an older
+#   shell would die with a cryptic syntax error partway through. macOS ships
+#   bash 3.2 as /bin/bash, so check up front and fail with an actionable
+#   message instead. The version defaults to the running shell; the arguments
+#   exist so both branches can be exercised in tests. Reads only BASH_VERSINFO
+#   and arithmetic, so it is itself 3.2-safe and must run before the first
+#   `[[ -v ]]`.
+#
+# Arguments:
+#   <major>  Running bash major version (default ${BASH_VERSINFO[0]})
+#   <minor>  Running bash minor version (default ${BASH_VERSINFO[1]})
+#
+# Returns:
+#   0 when the running bash is >= 4.2
+#   1 (after printing guidance to stderr) when it is older
+#
+# Example:
+#   dotfiles::require_bash
+#--------------------------------------------------
+dotfiles::require_bash() {
+    local major="${1:-${BASH_VERSINFO[0]}}"
+    local minor="${2:-${BASH_VERSINFO[1]}}"
+
+    if (( major < 4 || ( major == 4 && minor < 2 ) ))
+    then
+        printf 'dotfiles: requires bash >= 4.2 (found %s).\n' "${BASH_VERSION}" >&2
+        printf 'On macOS install a newer bash, e.g. brew install bash\n' >&2
+
+        return 1
+    fi
+}
+[[ -v TEST_FLAG ]] || readonly -f dotfiles::require_bash
+
+dotfiles::require_bash
+
 # ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   dotfiles::usage
+#
+# Description:
+#   Writes the command-line usage to stdout: the synopsis, the available
+#   commands, how tool arguments narrow the run, the options and a few
+#   examples.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 always
+#
+# Example:
+#   dotfiles::usage
+#--------------------------------------------------
+dotfiles::usage() {
+    cat <<'EOF'
+Usage: dotfiles [OPTIONS] [COMMAND] [TOOL...]
+
+Link (or unlink) configuration for the tools installed on this machine.
+A tool's config is applied only when that tool is present.
+
+Commands:
+  install     Link config for installed tools (default)
+  uninstall   Remove links previously created by install
+
+Tools:
+  Zero or more tool names (e.g. git). With none given every tool is
+  processed; otherwise only the named ones.
+
+Options:
+  -n, --dry-run   Show what would change without changing anything
+  -h, --help      Show this help and exit
+
+Examples:
+  dotfiles                       # install every detected tool
+  dotfiles install git           # install only git
+  dotfiles uninstall --dry-run   # preview removing every link
+EOF
+}
+[[ -v TEST_FLAG ]] || readonly -f dotfiles::usage
 
 #--------------------------------------------------
 # Function:
@@ -75,6 +163,11 @@ dotfiles::run() {
         return 0
     fi
 
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::notice 'dry run - no changes will be made'
+    fi
+
     for installer in "${installers[@]+"${installers[@]}"}"
     do
         "${installer}" "${command}" || return $?
@@ -123,6 +216,26 @@ dotfiles::main() {
         arg="$1"
 
         case "${arg}" in
+            -h | --help)
+                dotfiles::usage
+
+                return 0
+                ;;
+            -n | --dry-run)
+                DOTFILES_DRY_RUN=1
+                export DOTFILES_DRY_RUN
+                ;;
+            --)
+                shift
+
+                break
+                ;;
+            -*)
+                output::fatal "dotfiles: unknown option: ${arg}"
+                dotfiles::usage >&2
+
+                return 2
+                ;;
             install | uninstall)
                 command="${arg}"
                 ;;

@@ -7,6 +7,56 @@ Describe 'bin/dotfiles'
     Include bin/dotfiles
 
     # ==========================================================================
+    # dotfiles::usage
+    # ==========================================================================
+    Describe 'dotfiles::usage'
+
+        It 'prints the usage synopsis on stdout'
+            When call dotfiles::usage
+            The status should be success
+            The stdout should include 'Usage: dotfiles'
+            The stderr should be blank
+        End
+
+    End
+
+    # ==========================================================================
+    # dotfiles::require_bash
+    # ==========================================================================
+    Describe 'dotfiles::require_bash'
+
+        It 'accepts the minimum supported version'
+            When call dotfiles::require_bash 4 2
+            The status should be success
+            The stdout should be blank
+            The stderr should be blank
+        End
+
+        It 'accepts a newer version'
+            When call dotfiles::require_bash 5 3
+            The status should be success
+            The stdout should be blank
+            The stderr should be blank
+        End
+
+        It 'rejects a too-old major version'
+            When call dotfiles::require_bash 3 2
+            The status should be failure
+            The stdout should be blank
+            The stderr should include 'requires bash >= 4.2'
+            The stderr should include 'brew install bash'
+        End
+
+        It 'rejects a too-old minor on a matching major'
+            When call dotfiles::require_bash 4 1
+            The status should be failure
+            The stdout should be blank
+            The stderr should include 'requires bash >= 4.2'
+        End
+
+    End
+
+    # ==========================================================================
     # dotfiles::run
     # ==========================================================================
     Describe 'dotfiles::run'
@@ -72,6 +122,18 @@ beta:install'
             The stderr should equal 'dotfiles: unknown tool: ghost'
         End
 
+        It 'announces a dry run before dispatching'
+            printf '#!/usr/bin/env bash\nprintf "alpha:%%s\\n" "$1"\n' > "${DOTFILES_ROOT}/libexec/alpha"
+            chmod +x "${DOTFILES_ROOT}/libexec/alpha"
+
+            DOTFILES_DRY_RUN=1
+            When call dotfiles::run install
+            The status should be success
+            The stdout should equal 'dry run - no changes will be made
+alpha:install'
+            The stderr should be blank
+        End
+
         It 'propagates the exit status of a failing installer'
             printf '#!/usr/bin/env bash\nexit 7\n' > "${DOTFILES_ROOT}/libexec/10-boom"
             chmod +x "${DOTFILES_ROOT}/libexec/10-boom"
@@ -130,6 +192,38 @@ beta:install'
             The status should be success
             The stdout should equal 'run install git'
             The stderr should be blank
+        End
+
+        It 'treats arguments after -- literally as tool names'
+            dotfiles::run() { printf 'run %s\n' "$*"; }
+
+            When call dotfiles::main install -- --weird
+            The status should be success
+            The stdout should equal 'run install --weird'
+            The stderr should be blank
+        End
+
+        It 'exports DOTFILES_DRY_RUN on --dry-run'
+            dotfiles::run() { printf '%s\n' "${DOTFILES_DRY_RUN:-unset}"; }
+
+            When call dotfiles::main --dry-run install
+            The status should be success
+            The stdout should equal '1'
+            The stderr should be blank
+        End
+
+        It 'prints usage and succeeds on --help'
+            When call dotfiles::main --help
+            The status should be success
+            The stdout should include 'Usage: dotfiles'
+            The stderr should be blank
+        End
+
+        It 'rejects an unknown option with usage on stderr'
+            When call dotfiles::main --bogus
+            The status should equal 2
+            The stdout should be blank
+            The stderr should include 'dotfiles: unknown option: --bogus'
         End
 
     End
