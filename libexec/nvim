@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   nvim::available
+#
+# Description:
+#   Reports whether neovim is installed on this machine. Uses `command -v`,
+#   a POSIX shell builtin available in every bash the installer targets
+#   (including the macOS system bash 3.2), so presence detection needs no
+#   external tool of its own. The executable is named `nvim`, so that is
+#   what is probed.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when an nvim executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   nvim::available || return 0
+#--------------------------------------------------
+nvim::available() {
+    command -v nvim > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::available
+
+#--------------------------------------------------
+# Function:
+#   nvim::has_git
+#
+# Description:
+#   Reports whether git is available, the tool lazy.nvim uses to clone its
+#   own bootstrap and every declared plugin. Kept separate from
+#   nvim::install_plugins so the "no downloader" path is a single, testable
+#   predicate. Uses `command -v`.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when a git executable is on PATH
+#   1 otherwise
+#
+# Example:
+#   nvim::has_git || return 0
+#--------------------------------------------------
+nvim::has_git() {
+    command -v git > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::has_git
+
+#--------------------------------------------------
+# Function:
+#   nvim::sync_headless
+#
+# Description:
+#   Runs `:Lazy! sync` in a headless neovim so a plain `dotfiles install`
+#   leaves every declared plugin cloned and ready. Unlike vim-plug, lazy.nvim
+#   drives its clones without a controlling terminal, so neovim's own
+#   `--headless` mode is enough - no script(1)/pty workaround is needed. On
+#   startup the config bootstraps lazy.nvim itself (cloning it under
+#   stdpath('data')) and then `Lazy! sync` installs the rest; the bang runs it
+#   non-interactively and `+qa` quits once done. A thin, mockable wrapper
+#   around neovim so the spawn is isolated from the orchestration logic. All
+#   output is silenced.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 when the headless sync completed
+#   N propagated from nvim on failure
+#
+# Example:
+#   nvim::sync_headless
+#--------------------------------------------------
+nvim::sync_headless() {
+    nvim --headless '+Lazy! sync' +qa > /dev/null 2>&1
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::sync_headless
+
+#--------------------------------------------------
+# Function:
+#   nvim::install_plugins
+#
+# Description:
+#   Bootstraps the neovim plugins so `bin/dotfiles` leaves the editor ready to
+#   use, not just symlinked. Runs a headless `:Lazy! sync`, which clones
+#   lazy.nvim and every declared plugin under ${XDG_DATA_HOME:-~/.local/share}/
+#   nvim - deliberately outside ~/.config/nvim, which is the dotfiles symlink.
+#   Every step is best-effort: a missing git or a failed sync degrades to an
+#   informational line and a 0 return, so a transient network problem never
+#   fails the whole install. Honors DOTFILES_DRY_RUN (describe only) and
+#   DOTFILES_SKIP_NVIM_PLUGINS (skip entirely - the hermetic install-test sets
+#   it so CI never clones from the network; the lua config honors the same
+#   flag, so a headless config read stays offline too). Reports through the
+#   output library and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 always (plugin bootstrap is best-effort and never fails the install)
+#
+# Example:
+#   nvim::install_plugins
+#--------------------------------------------------
+nvim::install_plugins() {
+    local data_home
+
+    if [[ -n "${DOTFILES_SKIP_NVIM_PLUGINS:-}" ]]
+    then
+        output::info 'skipping nvim plugins (DOTFILES_SKIP_NVIM_PLUGINS set)'
+
+        return 0
+    fi
+
+    data_home="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim"
+
+    if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+    then
+        output::info "would install nvim plugins under ${data_home}"
+
+        return 0
+    fi
+
+    if ! nvim::has_git
+    then
+        output::info 'git not found - skipping nvim plugins'
+
+        return 0
+    fi
+
+    if nvim::sync_headless
+    then
+        output::success 'installed nvim plugins'
+
+        return 0
+    fi
+
+    output::info 'nvim plugin install reported an issue - continuing'
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::install_plugins
+
+#--------------------------------------------------
+# Function:
+#   nvim::install
+#
+# Description:
+#   Installs the shared neovim configuration by symlinking the
+#   share/dotfiles/nvim directory to ${XDG_CONFIG_HOME:-~/.config}/nvim, so its
+#   init.lua becomes the config neovim loads on startup, then bootstraps the
+#   plugins. neovim is XDG-native: it auto-loads
+#   ${XDG_CONFIG_HOME}/nvim/init.lua with no extra setup, so unlike git this
+#   installer needs no home-level stub - the single symlink is the whole config
+#   installation. Delegates the link (with its backup-and-converge behavior) to
+#   link::create, then hands off to nvim::install_plugins (best-effort). Reads
+#   DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::create on failure
+#
+# Example:
+#   nvim::install
+#--------------------------------------------------
+nvim::install() {
+    local source_dir
+    local xdg_base
+    local xdg_nvim
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/nvim"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_nvim="${xdg_base}/nvim"
+
+    output::stage 'Neovim'
+
+    link::create "${source_dir}" "${xdg_nvim}"
+
+    nvim::install_plugins
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::install
+
+#--------------------------------------------------
+# Function:
+#   nvim::remove_plugins
+#
+# Description:
+#   Removes the lazy.nvim trees that nvim::install_plugins created, so
+#   uninstall reverses install fully: the plugin data (and the relocated
+#   lazy-lock.json) under ${XDG_DATA_HOME:-~/.local/share}/nvim/lazy and the
+#   lazy state under ${XDG_STATE_HOME:-~/.local/state}/nvim/lazy. Leaves a tree
+#   alone when it does not exist, so a config-only install (plugins skipped or
+#   never bootstrapped) reverses silently, and never touches the rest of
+#   neovim's data (shada, sessions). Honors DOTFILES_DRY_RUN. Reports through
+#   the output library and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success, or when there is nothing to remove
+#   N propagated from rm on failure
+#
+# Example:
+#   nvim::remove_plugins
+#--------------------------------------------------
+nvim::remove_plugins() {
+    local lazy_dir
+    local -a lazy_dirs
+
+    lazy_dirs=()
+    lazy_dirs+=( "${XDG_DATA_HOME:-${HOME}/.local/share}/nvim/lazy" )
+    lazy_dirs+=( "${XDG_STATE_HOME:-${HOME}/.local/state}/nvim/lazy" )
+
+    for lazy_dir in "${lazy_dirs[@]}"
+    do
+        if [[ ! -d "${lazy_dir}" ]]
+        then
+            continue
+        fi
+
+        if [[ -n "${DOTFILES_DRY_RUN:-}" ]]
+        then
+            output::info "would remove ${lazy_dir}"
+
+            continue
+        fi
+
+        rm -rf -- "${lazy_dir}"
+        output::success "removed ${lazy_dir}"
+    done
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::remove_plugins
+
+#--------------------------------------------------
+# Function:
+#   nvim::uninstall
+#
+# Description:
+#   Reverses nvim::install. Delegates removal of the
+#   ${XDG_CONFIG_HOME:-~/.config}/nvim symlink to link::remove (which leaves
+#   anything that is not our link alone), then removes the lazy.nvim trees the
+#   install bootstrapped. There is no home-level stub to clean up. Reads
+#   DOTFILES_ROOT and writes under the home directory.
+#
+# Arguments:
+#   N/A
+#
+# Returns:
+#   0 on success
+#   N propagated from link::remove on failure
+#
+# Example:
+#   nvim::uninstall
+#--------------------------------------------------
+nvim::uninstall() {
+    local source_dir
+    local xdg_base
+    local xdg_nvim
+
+    source_dir="${DOTFILES_ROOT}/share/dotfiles/nvim"
+    xdg_base="${XDG_CONFIG_HOME:-${HOME}/.config}"
+    xdg_nvim="${xdg_base}/nvim"
+
+    output::stage 'Neovim'
+
+    link::remove "${source_dir}" "${xdg_nvim}"
+
+    nvim::remove_plugins
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::uninstall
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+#--------------------------------------------------
+# Function:
+#   nvim::main [<command>]
+#
+# Description:
+#   Entry point for the neovim installer. Skips silently when neovim is not
+#   installed, otherwise dispatches the lifecycle command (defaulting to
+#   `install`, mirroring the dotfiles entrypoint). Locates its config by
+#   recomputing DOTFILES_ROOT from its own path, so the installer can be
+#   run directly and in isolation without inheriting any variable.
+#
+# Arguments:
+#   <command>  install (default) or uninstall
+#
+# Returns:
+#   0 on success, or when neovim is not installed
+#   2 on an unknown command
+#   N propagated from the dispatched command
+#
+# Example:
+#   nvim::main install
+#--------------------------------------------------
+nvim::main() {
+    local command
+
+    command="${1:-install}"
+
+    nvim::available || return 0
+
+    case "${command}" in
+        install)
+            nvim::install
+            ;;
+        uninstall)
+            nvim::uninstall
+            ;;
+        *)
+            output::fatal "nvim: unknown command: ${command}"
+
+            return 2
+            ;;
+    esac
+}
+[[ -v TEST_FLAG ]] || readonly -f nvim::main
+
+# ─── Constants / globals ──────────────────────────────────────────────────────
+
+# Recomputed from this script's own location (libexec/nvim → repo root)
+# rather than inherited, so the installer is self-contained: it can be
+# invoked directly without the entrypoint exporting anything.
+DOTFILES_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+[[ -v TEST_FLAG ]] || readonly DOTFILES_ROOT
+
+# ─── Imports ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=../lib/output.sh
+source "${DOTFILES_ROOT}/lib/output.sh"
+# shellcheck source=../lib/link.sh
+source "${DOTFILES_ROOT}/lib/link.sh"
+
+# ─── Execute ──────────────────────────────────────────────────────────────────
+
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || nvim::main "$@"
