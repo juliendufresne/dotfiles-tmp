@@ -1,9 +1,11 @@
 {
+  "autoCompactEnabled": false,
   "permissions": {
     "allow": [
       "Bash(git log *)",
       "Bash(make *)"
     ],
+    "defaultMode": "auto",
     "deny": [
       "Bash(git commit *)",
       "Bash(git push *)",
@@ -16,12 +18,10 @@
       "Bash(git tag *)"
     ]
   },
+  "preferredNotifChannel": "terminal_bell",
+  "remoteControlAtStartup": false,
   "showClearContextOnPlanAccept": true,
   "showThinkingSummaries": true,
-  "preferredNotifChannel": "terminal_bell",
-  "autoCompactEnabled": false,
-  "remoteControlAtStartup": false,
   "skipAutoPermissionPrompt": true,
-  "defaultMode": "auto",
   "tui": "fullscreen"
 }
